@@ -69,8 +69,11 @@ export const Settings = () => {
   );
 };
 
-const SettingsItem = ({ icon: Icon, label, color = "text-brand-text-secondary" }: any) => (
-  <button className="w-full px-5 py-4 flex items-center justify-between hover:bg-brand-card/50 transition-colors group">
+const SettingsItem = ({ icon: Icon, label, onClick, color = "text-brand-text-secondary" }: any) => (
+  <button 
+    onClick={onClick}
+    className="w-full px-5 py-4 flex items-center justify-between hover:bg-brand-card/50 transition-colors group"
+  >
     <div className="flex items-center gap-4">
       <div className={`p-2 rounded-xl bg-brand-bg group-hover:bg-brand-surface transition-colors ${color}`}>
         <Icon size={20} />

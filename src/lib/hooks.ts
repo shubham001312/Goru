@@ -26,10 +26,10 @@ export const useChats = (userId: string | undefined) => {
   useEffect(() => {
     if (!userId) return;
 
+    // Remove orderBy from query to avoid composite index requirement
     const q = query(
       collection(db, 'chats'),
-      where('participants', 'array-contains', userId),
-      orderBy('createdAt', 'desc')
+      where('participants', 'array-contains', userId)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -37,9 +37,18 @@ export const useChats = (userId: string | undefined) => {
         id: doc.id, 
         ...doc.data() 
       } as Chat));
+      
+      // Sort in-memory
+      chatData.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis?.() || 0;
+        const timeB = b.createdAt?.toMillis?.() || 0;
+        return timeB - timeA;
+      });
+
       setChats(chatData);
       setLoading(false);
     }, (error) => {
+      console.error("useChats error:", error);
       handleFirestoreError(error, OperationType.LIST, 'chats');
       setLoading(false);
     });
@@ -213,21 +222,16 @@ export const addFriend = async (userId: string, friendId: string) => {
 
 export const startPrivateChat = async (currentUserId: string, targetUserId: string) => {
   try {
-    // Check if chat already exists
-    const q = query(
-      collection(db, 'chats'),
-      where('type', '==', 'private'),
-      where('participants', 'array-contains', currentUserId)
-    );
+    console.log('Starting chat between:', currentUserId, targetUserId);
     
-    // Note: we can't do array-contains on two fields, so we filter in-memory or use a combined key
-    // For simplicity here, we'll just check if participants match
-    // In a real app, use a unique composite ID like `uid1_uid2` (sorted)
+    // Deterministic Chat ID for 1:1 chats
     const chatId = [currentUserId, targetUserId].sort().join('_');
     const chatRef = doc(db, 'chats', chatId);
+    
     const chatSnap = await getDoc(chatRef);
 
     if (!chatSnap.exists()) {
+      console.log('Creating new chat with ID:', chatId);
       await setDoc(chatRef, {
         id: chatId,
         type: 'private',
@@ -235,8 +239,10 @@ export const startPrivateChat = async (currentUserId: string, targetUserId: stri
         createdAt: serverTimestamp(),
       });
     }
+    
     return chatId;
-  } catch (err) {
+  } catch (err: any) {
+    console.error('startPrivateChat error:', err);
     handleFirestoreError(err, OperationType.WRITE, 'chats');
     throw err;
   }

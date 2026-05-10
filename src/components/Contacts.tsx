@@ -43,16 +43,29 @@ export const Contacts = ({ onBack, onChatStarted }: { onBack: () => void; onChat
     }
   };
 
+  const [isStartingChat, setIsStartingChat] = useState<string | null>(null);
+
   const handleStartChat = async (targetUserId: string) => {
-    if (!profile) return;
-    const chatId = await startPrivateChat(profile.uid, targetUserId);
-    onChatStarted(chatId);
+    if (!profile || isStartingChat) return;
+    try {
+      setIsStartingChat(targetUserId);
+      const chatId = await startPrivateChat(profile.uid, targetUserId);
+      onChatStarted(chatId);
+    } catch (error) {
+      console.error("Failed to start chat:", error);
+    } finally {
+      setIsStartingChat(null);
+    }
   };
 
   const handleAddFriend = async (e: React.MouseEvent, friendId: string) => {
     e.stopPropagation();
     if (!profile) return;
-    await addFriend(profile.uid, friendId);
+    try {
+      await addFriend(profile.uid, friendId);
+    } catch (error) {
+      console.error("Failed to add friend:", error);
+    }
   };
 
   const isFriend = (uid: string) => friends.includes(uid);
@@ -104,8 +117,9 @@ export const Contacts = ({ onBack, onChatStarted }: { onBack: () => void; onChat
                     user={user}
                     index={idx}
                     isFriend={isFriend(user.uid)}
+                    loading={isStartingChat === user.uid}
                     onChat={() => handleStartChat(user.uid)}
-                    onAdd={(e) => handleAddFriend(e, user.uid)}
+                    onAdd={(e: any) => handleAddFriend(e, user.uid)}
                   />
                 ))}
                 {results.length === 0 && (
@@ -147,6 +161,7 @@ export const Contacts = ({ onBack, onChatStarted }: { onBack: () => void; onChat
                       user={user}
                       index={idx}
                       isFriend={true}
+                      loading={isStartingChat === user.uid}
                       onChat={() => handleStartChat(user.uid)}
                     />
                   ))
@@ -160,13 +175,13 @@ export const Contacts = ({ onBack, onChatStarted }: { onBack: () => void; onChat
   );
 };
 
-const UserItem = ({ user, index, isFriend, onChat, onAdd }: any) => (
+const UserItem = ({ user, index, isFriend, loading, onChat, onAdd }: any) => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ delay: index * 0.05 }}
     onClick={onChat}
-    className="flex items-center gap-4 px-4 py-4 hover:bg-brand-surface/50 cursor-pointer border-b border-brand-border/30 last:border-0 transition-colors group"
+    className={`flex items-center gap-4 px-4 py-4 hover:bg-brand-surface/50 cursor-pointer border-b border-brand-border/30 last:border-0 transition-colors group ${loading ? 'opacity-50 pointer-events-none' : ''}`}
   >
     <Avatar name={user.displayName} src={user.photoURL} size={48} />
     <div className="flex-1 min-w-0">
@@ -174,8 +189,10 @@ const UserItem = ({ user, index, isFriend, onChat, onAdd }: any) => (
       <p className="text-xs text-brand-text-muted">@{user.username}</p>
     </div>
     <div className="flex items-center gap-2">
-      {isFriend ? (
-        <MessageCircle size={18} className="text-brand-blue opacity-0 group-hover:opacity-100 transition-opacity" />
+      {loading ? (
+        <div className="w-5 h-5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin" />
+      ) : isFriend ? (
+        <MessageCircle size={18} className="text-brand-blue" />
       ) : (
         <motion.button
           whileTap={{ scale: 0.9 }}
