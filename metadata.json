@@ -1,0 +1,11 @@
+{
+  "name": "Goru",
+  "description": "A privacy-first, secure, and completely free messaging app inspired by Telegram. Features end-to-end encryption, self-destructing messages, and real-time communication.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "notifications",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}

@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUserVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == "shubham.mallick1440@gmail.com" || request.auth.token.email == "shubham93328@gmail.com");
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.email == "shubham.mallick1440@gmail.com" || request.auth.token.email == "shubham93328@gmail.com");
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.uid == request.auth.uid
+          && data.displayName is string
+          && data.username is string;
+      }
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(request.resource.data);
+      allow update: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /notifications/{notificationId} {
+      allow create: if isAdmin();
+      allow read: if isSignedIn() && (resource.data.targetUid == "all" || resource.data.targetUid == request.auth.uid);
+      allow update: if isSignedIn() && resource.data.targetUid == request.auth.uid;
+    }
+
+    match /chats/{chatId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read, write: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+      }
+    }
+  }
+}

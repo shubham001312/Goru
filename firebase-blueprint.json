@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Public profile information for a Goru user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Firebase Auth UID." },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "photoURL": { "type": "string", "format": "uri" },
+        "bio": { "type": "string" },
+        "isOnline": { "type": "boolean" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "username", "createdAt"]
+    },
+    "Chat": {
+      "title": "Conversation",
+      "description": "A private or group conversation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["private", "group", "channel"] },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "name": { "type": "string", "description": "Group name or empty for private chats." },
+        "photoURL": { "type": "string", "format": "uri" },
+        "adminIds": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "senderId": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "type", "participants", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "An individual message within a chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "chatId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "image", "video", "file", "audio"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["sent", "delivered", "read"] },
+        "attachmentUrl": { "type": "string", "format": "uri" },
+        "selfDestructAt": { "type": "string", "format": "date-time", "description": "Optional timestamp for message deletion if it's a secret chat." }
+      },
+      "required": ["id", "chatId", "senderId", "text", "type", "timestamp"]
+    },
+    "Notification": {
+      "title": "System Notification",
+      "description": "A message sent by an admin to users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "targetUid": { "type": "string", "description": "UID of the recipient or 'all' for broadcast." },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["id", "targetUid", "title", "body", "timestamp"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles indexed by UID."
+    },
+    "notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "System-wide or user-specific notifications."
+    },
+    "chats/{chatId}": {
+      "schema": "Chat",
+      "description": "All conversations."
+    },
+    "chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a specific chat."
+    }
+  }
+}
