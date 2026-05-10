@@ -3,9 +3,10 @@ export type UserProfile = {
   displayName: string;
   username: string;
   photoURL?: string;
+  wallpaperURL?: string;
   bio?: string;
-  isOnline?: boolean;
-  lastSeen?: string;
+  isOnline: boolean;
+  lastSeen: any;
   location?: {
     lat: number;
     lng: number;
@@ -13,6 +14,8 @@ export type UserProfile = {
   };
   isAdmin?: boolean;
   createdAt: string;
+  lockedChatIds?: string[];
+  chatLockCode?: string;
 };
 
 export type ChatType = 'private' | 'group' | 'channel';

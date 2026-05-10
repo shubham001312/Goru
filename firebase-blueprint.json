@@ -91,6 +91,10 @@
     "chats/{chatId}/messages/{messageId}": {
       "schema": "Message",
       "description": "Messages within a specific chat."
+    },
+    "chats/{chatId}/typingStatus/{userId}": {
+      "schema": { "type": "object", "properties": { "isTyping": { "type": "boolean" }, "timestamp": { "type": "string", "format": "date-time" } } },
+      "description": "Typing indicators for users in a chat."
     }
   }
 }

@@ -10,6 +10,7 @@ import {
   doc,
   updateDoc,
   setDoc,
+  deleteDoc,
   getDoc,
   getDocs,
   limit
@@ -88,14 +89,15 @@ export const useMessages = (chatId: string | undefined) => {
     return unsubscribe;
   }, [chatId]);
 
-  const sendMessage = async (senderId: string, text: string) => {
-    if (!chatId || !text.trim()) return;
+  const sendMessage = async (senderId: string, text: string, type: string = 'text', mediaUrl?: string) => {
+    if (!chatId || (!text.trim() && !mediaUrl)) return;
 
     const msgData = {
       chatId,
       senderId,
       text: text.trim(),
-      type: 'text',
+      type,
+      mediaUrl,
       timestamp: serverTimestamp(),
       status: 'sent'
     };
@@ -115,7 +117,88 @@ export const useMessages = (chatId: string | undefined) => {
     }
   };
 
-  return { messages, loading, sendMessage };
+  const markMessagesAsRead = async (userId: string) => {
+    if (!chatId || !userId) return;
+
+    try {
+      // Find unread messages from the other user
+      // We use 'status' in ['sent', 'delivered'] which is an equality-based check for multiple values
+      const unreadQ = query(
+        collection(db, 'chats', chatId, 'messages'),
+        where('status', 'in', ['sent', 'delivered'])
+      );
+      
+      const snapshot = await getDocs(unreadQ);
+      const batch: Promise<void>[] = [];
+      
+      snapshot.docs.forEach(d => {
+        const data = d.data();
+        // Only mark as read if it's from the other user
+        if (data.senderId !== userId) {
+          batch.push(updateDoc(doc(db, 'chats', chatId, 'messages', d.id), {
+            status: 'read'
+          }));
+        }
+      });
+      
+      await Promise.all(batch);
+    } catch (err) {
+      console.error("markMessagesAsRead error:", err);
+    }
+  };
+
+  return { messages, loading, sendMessage, markMessagesAsRead };
+};
+
+// Hook for typing status
+export const useTypingStatus = (chatId: string | undefined, currentUserId: string | undefined) => {
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!chatId || !currentUserId) return;
+
+    // Listen to the typingStatus subcollection
+    const q = query(collection(db, 'chats', chatId, 'typingStatus'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const users: string[] = [];
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        // Only include if it's NOT the current user and isTyping is true
+        // And maybe check timestamp to avoid stale status (e.g. within last 10 seconds)
+        const isTyping = data.isTyping === true;
+        const lastUpdate = data.timestamp?.toMillis() || 0;
+        const now = Date.now();
+        
+        if (doc.id !== currentUserId && isTyping && (now - lastUpdate < 10000)) {
+          users.push(doc.id);
+        }
+      });
+      setTypingUsers(users);
+    }, (error) => {
+      console.error("useTypingStatus error:", error);
+    });
+
+    return unsubscribe;
+  }, [chatId, currentUserId]);
+
+  return typingUsers;
+};
+
+export const setTypingStatus = async (chatId: string, userId: string, isTyping: boolean) => {
+  try {
+    const typingRef = doc(db, 'chats', chatId, 'typingStatus', userId);
+    if (isTyping) {
+      await setDoc(typingRef, {
+        isTyping: true,
+        timestamp: serverTimestamp()
+      });
+    } else {
+      await deleteDoc(typingRef);
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `chats/${chatId}/typingStatus`);
+  }
 };
 
 // Hook for searching users
@@ -228,22 +311,177 @@ export const startPrivateChat = async (currentUserId: string, targetUserId: stri
     const chatId = [currentUserId, targetUserId].sort().join('_');
     const chatRef = doc(db, 'chats', chatId);
     
-    const chatSnap = await getDoc(chatRef);
+    let chatSnap;
+    try {
+      chatSnap = await getDoc(chatRef);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `chats/${chatId}`);
+      throw err;
+    }
 
     if (!chatSnap.exists()) {
       console.log('Creating new chat with ID:', chatId);
-      await setDoc(chatRef, {
-        id: chatId,
-        type: 'private',
-        participants: [currentUserId, targetUserId],
-        createdAt: serverTimestamp(),
-      });
+      try {
+        await setDoc(chatRef, {
+          id: chatId,
+          type: 'private',
+          participants: [currentUserId, targetUserId],
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `chats/${chatId}`);
+        throw err;
+      }
     }
     
     return chatId;
   } catch (err: any) {
-    console.error('startPrivateChat error:', err);
+    console.error('startPrivateChat top-level error:', err);
+    throw err;
+  }
+};
+
+export const createGroup = async (name: string, participantIds: string[], creatorId: string, photoURL?: string) => {
+  try {
+    const participants = Array.from(new Set([...participantIds, creatorId]));
+    const chatData = {
+      name,
+      type: 'group',
+      participants,
+      creatorId,
+      photoURL: photoURL || null,
+      createdAt: serverTimestamp(),
+    };
+    
+    const docRef = await addDoc(collection(db, 'chats'), chatData);
+    await updateDoc(docRef, { id: docRef.id });
+    
+    return docRef.id;
+  } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'chats');
     throw err;
   }
+};
+
+export const clearChat = async (chatId: string) => {
+  try {
+    const messagesQ = query(collection(db, 'chats', chatId, 'messages'));
+    const snapshot = await getDocs(messagesQ);
+    const batch = snapshot.docs.map(d => deleteDoc(doc(db, 'chats', chatId, 'messages', d.id)));
+    await Promise.all(batch);
+    
+    // Update last message to reflect cleared chat
+    await updateDoc(doc(db, 'chats', chatId), {
+      lastMessage: null
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `chats/${chatId}/messages`);
+    throw err;
+  }
+};
+
+export const deleteChat = async (chatId: string) => {
+  try {
+    await clearChat(chatId);
+    await deleteDoc(doc(db, 'chats', chatId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `chats/${chatId}`);
+    throw err;
+  }
+};
+
+export const updateProfile = async (userId: string, data: Partial<UserProfile>) => {
+  try {
+    await updateDoc(doc(db, 'users', userId), data);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    throw err;
+  }
+};
+
+export const toggleChatLock = async (userId: string, chatId: string, isLocked: boolean) => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return;
+
+    const userData = userSnap.data() as UserProfile;
+    let lockedChatIds = userData.lockedChatIds || [];
+
+    if (isLocked) {
+      if (!lockedChatIds.includes(chatId)) {
+        lockedChatIds.push(chatId);
+      }
+    } else {
+      lockedChatIds = lockedChatIds.filter(id => id !== chatId);
+    }
+
+    await updateDoc(userRef, { lockedChatIds });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    throw err;
+  }
+};
+
+// Hook for presence tracking
+export const usePresence = (userId: string | undefined) => {
+  useEffect(() => {
+    if (!userId) return;
+
+    const userRef = doc(db, 'users', userId);
+
+    const setOnline = async () => {
+      try {
+        await updateDoc(userRef, {
+          isOnline: true,
+          lastSeen: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Error setting online status:", err);
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+      }
+    };
+
+    const setOffline = async () => {
+      try {
+        await updateDoc(userRef, {
+          isOnline: false,
+          lastSeen: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Error setting offline status:", err);
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+      }
+    };
+
+    // Set online when tab becomes visible, offline when hidden
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setOnline();
+      } else {
+        setOffline();
+      }
+    };
+
+    // Initial state
+    if (document.visibilityState === 'visible') {
+      setOnline();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Heartbeat to keep online status fresh if tab is visible
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setOnline();
+      }
+    }, 60000); // Every minute
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(interval);
+      setOffline();
+    };
+  }, [userId]);
 };

@@ -10,25 +10,70 @@
 
 import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
+import { usePresence } from './lib/hooks';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatList } from './components/ChatList';
 import { ChatRoom } from './components/ChatRoom';
 import { Settings } from './components/Settings';
-import { Contacts } from './components/Contacts';
+import { Discover } from './components/Discover';
 import { AdminDashboard } from './components/AdminDashboard';
-import { MessageCircle, Phone, Users, Settings as SettingsIcon, ShieldAlert, Bell, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { db } from './lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, limit, doc, updateDoc } from 'firebase/firestore';
-import { Notification } from './types';
+import { MessageCircle, Phone, Settings as SettingsIcon, ShieldAlert, Bell, X, Shield, Plus } from 'lucide-react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
+import { db, messaging } from './lib/firebase';
+import { collection, query, where, onSnapshot, orderBy, limit, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { getToken, onMessage } from 'firebase/messaging';
+import { Notification as AppNotification } from './types';
+import { Avatar } from './components/common';
+import { NotificationProvider, useNotification } from './lib/notifications';
 
-type Screen = 'chats' | 'calls' | 'contacts' | 'settings' | 'chat-room' | 'admin';
+type Screen = 'chats' | 'calls' | 'settings' | 'chat-room' | 'admin' | 'discover';
 
 function MainLayout() {
   const { user, profile, loading } = useAuth();
+  const { showNotification } = useNotification();
+  usePresence(user?.uid);
   const [currentScreen, setCurrentScreen] = useState<Screen>('chats');
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [activeNotification, setActiveNotification] = useState<Notification | null>(null);
+  const [activeNotification, setActiveNotification] = useState<AppNotification | null>(null);
+
+  // Apply theme on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.classList.toggle('light', savedTheme === 'light');
+  }, []);
+
+  // Global error listener for Firebase Custom Errors
+  useEffect(() => {
+    const handleError = (event: ErrorEvent | PromiseRejectionEvent) => {
+      const error = 'reason' in event ? event.reason : event.error;
+      if (error && typeof error.message === 'string') {
+        try {
+          const parsed = JSON.parse(error.message);
+          if (parsed && parsed.error) {
+            // Handle FirestoreErrorInfo
+            let userFriendlyMsg = "Something went wrong";
+            if (parsed.error.includes("Missing or insufficient permissions")) {
+              userFriendlyMsg = "You don't have permission to perform this action.";
+            } else if (parsed.error.includes("quota exceeded")) {
+              userFriendlyMsg = "Database quota exceeded. Please try again tomorrow.";
+            } else if (parsed.error.includes("offline")) {
+              userFriendlyMsg = "You are currently offline. Please check your connection.";
+            }
+            showNotification(userFriendlyMsg, 'error');
+          }
+        } catch (e) {
+          // Not a JSON error message, ignore or handle differently if needed
+        }
+      }
+    };
+
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleError);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleError);
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -37,38 +82,81 @@ function MainLayout() {
     const qAll = query(
       collection(db, 'notifications'), 
       where('targetUid', '==', 'all'),
-      orderBy('timestamp', 'desc'),
-      limit(1)
+      limit(5) // Get latest 5 and sort in-memory to avoid index requirement
     );
     
     const qUser = query(
       collection(db, 'notifications'), 
       where('targetUid', '==', user.uid),
       where('read', '==', false),
-      orderBy('timestamp', 'desc'),
-      limit(1)
+      limit(5)
     );
 
     const unsubAll = onSnapshot(qAll, (snap) => {
       if (!snap.empty) {
-        const notif = { id: snap.docs[0].id, ...snap.docs[0].data() } as Notification;
-        // Only show if it's very recent or we have a mechanism to track read state for 'all'
-        // For simplicity, just show the latest one if it's new in this session
-        setActiveNotification(notif);
+        const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
+        notifs.sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+        setActiveNotification(notifs[0]);
       }
-    });
+    }, (err) => console.error("Notification global unsub error:", err));
 
     const unsubUser = onSnapshot(qUser, (snap) => {
       if (!snap.empty) {
-        const notif = { id: snap.docs[0].id, ...snap.docs[0].data() } as Notification;
-        setActiveNotification(notif);
+        const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
+        notifs.sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+        setActiveNotification(notifs[0]);
       }
-    });
+    }, (err) => console.error("Notification user unsub error:", err));
 
     return () => {
       unsubAll();
       unsubUser();
     };
+  }, [user]);
+
+  // Push Notifications Setup
+  useEffect(() => {
+    if (!user || !messaging) return;
+
+    const requestPermission = async () => {
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          const token = await getToken(messaging, { 
+            vapidKey: 'BNoX_8WIdM6b...', // Usually provided in Firebase Console
+          });
+          
+          if (token) {
+            console.log('FCM Token:', token);
+            // Save token to user profile
+            await updateDoc(doc(db, 'users', user.uid), {
+              fcmToken: token
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error requesting notification permission:', error);
+      }
+    };
+
+    requestPermission();
+
+    // Foreground message handler
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.log('Foreground message received:', payload);
+      if (payload.notification) {
+        setActiveNotification({
+          id: Date.now().toString(),
+          title: payload.notification.title || 'New Message',
+          body: payload.notification.body || '',
+          targetUid: user.uid,
+          read: false,
+          timestamp: new Date() as any
+        });
+      }
+    });
+
+    return unsubscribe;
   }, [user]);
 
   const closeNotification = async () => {
@@ -108,19 +196,20 @@ function MainLayout() {
           <motion.div key="chats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
             <ChatList 
               onSelectChat={navigateToChat} 
-              onNewChat={() => setCurrentScreen('contacts')}
+              onNewChat={() => setCurrentScreen('discover')}
             />
           </motion.div>
         )}
-        
-        {currentScreen === 'contacts' && (
-          <motion.div key="contacts" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="h-full">
-            <Contacts 
+
+        {currentScreen === 'discover' && (
+          <motion.div key="discover" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }} className="h-full">
+            <Discover 
               onBack={() => setCurrentScreen('chats')} 
               onChatStarted={navigateToChat}
             />
           </motion.div>
         )}
+        
 
         {currentScreen === 'settings' && (
           <motion.div key="settings" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
@@ -149,7 +238,7 @@ function MainLayout() {
           </motion.div>
         )}
 
-        {/* Placeholder for Calls */}
+
         {currentScreen === 'calls' && (
           <div className="flex-1 flex flex-col items-center justify-center text-brand-text-muted p-12 text-center">
             <Phone size={64} className="mb-4 opacity-20" />
@@ -162,7 +251,7 @@ function MainLayout() {
 
       {/* Bottom Navigation */}
       {currentScreen !== 'chat-room' && (
-        <nav className="fixed bottom-0 left-0 right-0 h-20 bg-brand-surface/80 backdrop-blur-lg border-t border-brand-border flex items-center justify-around px-2 pb-2 z-[50]">
+        <nav className="fixed bottom-0 left-0 right-0 h-20 glass border-t border-white/5 flex items-center justify-around px-2 pb-2 z-[50]">
           <NavItem 
             icon={MessageCircle} 
             label="Chats" 
@@ -174,12 +263,6 @@ function MainLayout() {
             label="Calls" 
             active={currentScreen === 'calls'} 
             onClick={() => setCurrentScreen('calls')} 
-          />
-          <NavItem 
-            icon={Users} 
-            label="Contacts" 
-            active={currentScreen === 'contacts'} 
-            onClick={() => setCurrentScreen('contacts')} 
           />
           <NavItem 
             icon={SettingsIcon} 
@@ -197,7 +280,15 @@ function MainLayout() {
             initial={{ y: -100, opacity: 0 }}
             animate={{ y: 20, opacity: 1 }}
             exit={{ y: -100, opacity: 0 }}
-            className="fixed top-4 left-4 right-4 z-[200] bg-brand-blue rounded-2xl shadow-2xl p-4 border border-white/20"
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            onDragEnd={(_, info) => {
+              if (Math.abs(info.offset.x) > 100) {
+                closeNotification();
+              }
+            }}
+            whileDrag={{ scale: 1.02 }}
+            className="fixed top-4 left-4 right-4 z-[200] glass-maroon rounded-2xl shadow-2xl p-4 border border-brand-maroon/30 cursor-grab active:cursor-grabbing"
           >
             <div className="flex gap-4">
               <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white flex-shrink-0">
@@ -222,13 +313,13 @@ function NavItem({ icon: Icon, label, active, onClick }: any) {
   return (
     <button 
       onClick={onClick}
-      className={`flex flex-col items-center gap-1 flex-1 py-2 rounded-2xl transition-all ${active ? 'text-brand-blue' : 'text-brand-text-muted hover:text-brand-text-secondary'}`}
+      className={`flex flex-col items-center gap-1 flex-1 py-2 rounded-2xl transition-all ${active ? 'text-brand-maroon' : 'text-brand-text-muted hover:text-brand-text-secondary'}`}
     >
-      <div className={`relative p-1.5 rounded-xl transition-colors ${active ? 'bg-brand-blue/10' : ''}`}>
-        <Icon size={24} fill={active ? 'currentColor' : 'none'} className={active ? 'opacity-90' : ''} />
-        {active && <motion.div layoutId="nav-dot" className="absolute -top-1 -right-1 w-2 h-2 bg-brand-blue rounded-full" />}
+      <div className={`relative p-1.5 rounded-xl transition-colors ${active ? 'bg-brand-maroon/10' : ''}`}>
+        <Icon size={22} fill={active ? 'currentColor' : 'none'} className={active ? 'opacity-90' : ''} />
+        {active && <motion.div layoutId="nav-dot" className="absolute -top-1 -right-1 w-2 h-2 bg-brand-maroon rounded-full" />}
       </div>
-      <span className="text-[10px] font-semibold tracking-wide uppercase">{label}</span>
+      <span className="text-[9px] font-bold tracking-tight uppercase">{label}</span>
     </button>
   );
 }
@@ -284,9 +375,11 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 export default function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <MainLayout />
-      </AuthProvider>
+      <NotificationProvider>
+        <AuthProvider>
+          <MainLayout />
+        </AuthProvider>
+      </NotificationProvider>
     </ErrorBoundary>
   );
 }

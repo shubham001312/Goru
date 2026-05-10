@@ -115,11 +115,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           photoURL: u.photoURL || undefined,
           createdAt: new Date().toISOString(),
           isOnline: true,
+          lastSeen: new Date(),
           isAdmin: isAdmin
         };
         await setDoc(docRef, {
           ...newProfile,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          lastSeen: serverTimestamp()
         });
         setProfile(newProfile);
       } else {
@@ -132,7 +134,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         }
         await fetchProfile(u.uid);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === 'auth/unauthorized-domain') {
+        throw new Error('This domain is not authorized in Firebase. Please add your Netlify/custom domain to Authorized Domains in Firebase Authentication Settings.');
+      }
       handleFirestoreError(err, OperationType.WRITE, `users`);
       throw err;
     }
@@ -159,12 +164,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         username: usernameKey,
         createdAt: new Date().toISOString(),
         isOnline: true,
+        lastSeen: new Date(),
       };
       
       // We should ideally use a batch here, but for simplicity:
       await setDoc(doc(db, 'users', result.user.uid), {
         ...newProfile,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        lastSeen: serverTimestamp()
       });
       
       await setDoc(usernameRef, {

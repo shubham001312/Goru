@@ -66,7 +66,7 @@ export const AuthScreen = () => {
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="text-4xl font-bold text-white mb-2"
+          className="text-4xl font-bold text-brand-text-primary mb-2"
         >
           Goru
         </motion.h1>
@@ -125,7 +125,7 @@ export const AuthScreen = () => {
               <button
                 onClick={handleGoogleSignIn}
                 disabled={loading}
-                className="w-full h-14 bg-white text-[#0E1117] rounded-2xl font-semibold shadow-lg flex items-center justify-center gap-3 transition-all hover:bg-gray-100 disabled:opacity-50"
+                className="w-full h-14 bg-brand-surface text-brand-text-primary rounded-2xl font-semibold shadow-sm border border-brand-border flex items-center justify-center gap-3 transition-all hover:bg-brand-card disabled:opacity-50"
               >
                 <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
                 Continue with Google
@@ -161,7 +161,7 @@ export const AuthScreen = () => {
             </button>
 
             <div className="mb-8">
-              <h1 className="text-3xl font-bold text-white mb-2">
+              <h1 className="text-3xl font-bold text-brand-text-primary mb-2">
                 {mode === 'username-signup' ? 'Create Account' : 'Welcome Back'}
               </h1>
               <p className="text-brand-text-secondary">
@@ -235,7 +235,7 @@ const FeatureItem = ({ icon: Icon, title, description }: { icon: any; title: str
       <Icon size={24} />
     </div>
     <div>
-      <h3 className="font-semibold text-white">{title}</h3>
+      <h3 className="font-semibold text-brand-text-primary">{title}</h3>
       <p className="text-sm text-brand-text-secondary leading-relaxed">{description}</p>
     </div>
   </motion.div>
@@ -248,7 +248,7 @@ const AuthInput = ({ icon: Icon, ...props }: any) => (
     </div>
     <input 
       {...props}
-      className="w-full bg-brand-surface border border-brand-border rounded-2xl py-4 pl-12 pr-4 text-white outline-none focus:border-brand-blue transition-all"
+      className="w-full bg-brand-surface border border-brand-border rounded-2xl py-4 pl-12 pr-4 text-brand-text-primary outline-none focus:border-brand-blue transition-all"
     />
   </div>
 );
