@@ -76,6 +76,10 @@
       "schema": "User",
       "description": "User profiles indexed by UID."
     },
+    "users/{userId}/friends/{friendId}": {
+      "schema": { "type": "object", "properties": { "uid": { "type": "string" }, "addedAt": { "type": "string", "format": "date-time" } } },
+      "description": "User's friends list."
+    },
     "notifications/{notificationId}": {
       "schema": "Notification",
       "description": "System-wide or user-specific notifications."

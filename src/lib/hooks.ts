@@ -11,6 +11,7 @@ import {
   updateDoc,
   setDoc,
   getDoc,
+  getDocs,
   limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -109,36 +110,105 @@ export const useMessages = (chatId: string | undefined) => {
 };
 
 // Hook for searching users
-export const useSearchUsers = () => {
+export const useSearchUsers = (currentUserId?: string) => {
   const [results, setResults] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(false);
 
   const search = async (term: string) => {
-    if (!term.trim()) {
+    if (!term.trim() || term.length < 2) {
       setResults([]);
       return;
     }
     setLoading(true);
-    // Simple search by username prefix
-    const q = query(
-      collection(db, 'users'),
-      where('username', '>=', term),
-      where('username', '<=', term + '\uf8ff'),
-      limit(10)
-    );
-    
-    // onSnapshot or getDocs? Let's use onSnapshot for consistency or just a promise
-    onSnapshot(q, (snap) => {
-      const users = snap.docs.map(d => d.data() as UserProfile);
-      setResults(users);
-      setLoading(false);
-    }, (error) => {
+
+    try {
+      // We search by username prefix
+      const qUsername = query(
+        collection(db, 'users'),
+        where('username', '>=', term.toLowerCase()),
+        where('username', '<=', term.toLowerCase() + '\uf8ff'),
+        limit(20)
+      );
+
+      // And we search by displayName prefix
+      // Note: Case sensitivity matters in Firestore prefix search. 
+      // User must type with correct capitalization or we need a normalized field.
+      // For now, let's do both and merge.
+      const qDisplayName = query(
+        collection(db, 'users'),
+        where('displayName', '>=', term),
+        where('displayName', '<=', term + '\uf8ff'),
+        limit(20)
+      );
+
+      const [snap1, snap2] = await Promise.all([
+        getDocs(qUsername),
+        getDocs(qDisplayName)
+      ]);
+
+      const usersMap = new Map<string, UserProfile>();
+      
+      snap1.docs.forEach(d => {
+        const u = d.data() as UserProfile;
+        if (u.uid !== currentUserId) usersMap.set(u.uid, u);
+      });
+
+      snap2.docs.forEach(d => {
+        const u = d.data() as UserProfile;
+        if (u.uid !== currentUserId) usersMap.set(u.uid, u);
+      });
+
+      setResults(Array.from(usersMap.values()));
+    } catch (error) {
+      console.error('Search error:', error);
       handleFirestoreError(error, OperationType.LIST, 'users');
+    } finally {
       setLoading(false);
-    });
+    }
   };
 
   return { search, results, loading };
+};
+
+// Hook for fetching friends
+export const useFriends = (userId: string | undefined) => {
+  const [friends, setFriends] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const q = query(collection(db, 'users', userId, 'friends'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const friendIds = snapshot.docs.map(doc => doc.id);
+      setFriends(friendIds);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${userId}/friends`);
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, [userId]);
+
+  return { friends, loading };
+};
+
+export const addFriend = async (userId: string, friendId: string) => {
+  try {
+    await setDoc(doc(db, 'users', userId, 'friends', friendId), {
+      uid: friendId,
+      addedAt: serverTimestamp()
+    });
+    // Add reciprocity? (Optional depending on model, let's keep it simple for now)
+    await setDoc(doc(db, 'users', friendId, 'friends', userId), {
+      uid: userId,
+      addedAt: serverTimestamp()
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${userId}/friends`);
+  }
 };
 
 export const startPrivateChat = async (currentUserId: string, targetUserId: string) => {

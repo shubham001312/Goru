@@ -30,6 +30,10 @@ service cloud.firestore {
       allow get, list: if isSignedIn();
       allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(request.resource.data);
       allow update: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+
+      match /friends/{friendId} {
+        allow read, write: if isSignedIn() && (userId == request.auth.uid || friendId == request.auth.uid);
+      }
     }
 
     match /usernames/{username} {
